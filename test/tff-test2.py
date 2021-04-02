@@ -48,9 +48,10 @@ def model_fn():
 
 # 客户端更新模块的tf代码
 @tf.function
-def client_update(model, dataset, server_weights, client_optimizer):
+def client_update(model, dataset, server_weights, client_optimizer, loss):
     """
     使用server传输的模型参数和client的数据集来训练模型
+    :param loss:
     :param model: 客户端模型
     :param dataset: 客户端数据集
     :param server_weights: 服务端参数
@@ -59,6 +60,8 @@ def client_update(model, dataset, server_weights, client_optimizer):
     """
     # 获取客户端模型的参数
     client_weights = model.trainable_variables
+    client_loss = loss
+    tf.nest.map_structure(lambda x, y: x.assign(y), client_loss, loss)
     # 使用服务端的模型参数来更新客户端的模型参数
     tf.nest.map_structure(lambda x, y: x.assign(y), client_weights, server_weights)
     # 使用客户端优化器来对本地模型进行训练
@@ -67,12 +70,14 @@ def client_update(model, dataset, server_weights, client_optimizer):
             # 计算前向传播
             outputs = model.forward_pass(batch)
         # 计算相应的梯度
+        client_loss += outputs.loss
         grads = tape.gradient(outputs.loss, client_weights)
         grads_and_vars = zip(grads, client_weights)
 
         # 更新梯度
         client_optimizer.apply_gradients(grads_and_vars)
-    return client_weights
+    client_loss /= tf.cast(len(dataset), dtype=tf.float32)
+    return client_weights, client_loss
 
 # 服务端的更新的tf代码
 @tf.function
@@ -113,7 +118,8 @@ tf_dataset_type = tff.SequenceType(dummy_model.input_spec)
 def client_update_fn(tf_dataset, server_weights):
     model = model_fn()
     client_optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
-    return client_update(model, tf_dataset, server_weights, client_optimizer)
+    loss = tf.Variable(0.0, trainable=False, dtype=tf.float32)
+    return client_update(model, tf_dataset, server_weights, client_optimizer, loss)
 
 # 将服务器更新代码转为tff代码
 @tff.tf_computation(model_weights_type)
@@ -133,7 +139,7 @@ def next_fn(server_weights, federated_dataset):
     server_weights_at_client = tff.federated_broadcast(server_weights)
 
     # 客户端计算更新过程，并更新参数
-    client_weights = tff.federated_map(
+    client_weights, clients_loss = tff.federated_map(
         client_update_fn, (federated_dataset, server_weights_at_client)
     )
 
@@ -143,7 +149,17 @@ def next_fn(server_weights, federated_dataset):
     # 服务器更新他的模型
     server_weights = tff.federated_map(server_update_fn, mean_client_weights)
 
-    return server_weights, client_weights
+    return server_weights, client_weights, clients_loss
+
+def evaluate(server_state, central_emnist_test):
+  keras_model = create_keras_model()
+  keras_model.compile(
+      loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+      metrics=[tf.keras.metrics.SparseCategoricalAccuracy()]
+  )
+  keras_model.set_weights(server_state)
+  result = keras_model.evaluate(central_emnist_test, verbose=0)
+  return result
 
 # 初始化联邦学习算法
 federated_algorithm = tff.templates.IterativeProcess(
@@ -154,7 +170,8 @@ federated_algorithm = tff.templates.IterativeProcess(
 state = federated_algorithm.initialize()
 
 # 开始训练
-NUM_ROUNDS = 2
+NUM_ROUNDS = 11
 for round_num in range(1, NUM_ROUNDS):
-    state, client_weights = federated_algorithm.next(state, federated_train_data)
-    print("NUM_ROUNDS: ", round_num)
+    state, client_weights, client_loss = federated_algorithm.next(state, federated_train_data)
+    # 对每一个客户端进行评估
+    print("NUM_ROUNDS: {}, Loss: {}".format(round_num, np.array(client_loss)))
