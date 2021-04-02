@@ -98,7 +98,11 @@ def dealQUIC():
     # 制作总的数据集----这个暂时用不了
     train_data = create_tf_dataset_for_client(x_train, y_train)
     test_data = create_tf_dataset_for_client(x_test, y_test)
-    val_data = tf.data.Dataset.from_tensor_slices((x_val, y_val))
+    val_data = create_tf_dataset_for_client(x_val, y_val)
+
+    print(train_data)
+    print(test_data)
+    print(val_data)
 
     return train_data, test_data, val_data
 
@@ -122,7 +126,9 @@ def create_tf_dataset_for_client(x_data, y_data):
         # 将其制作成为orderedDict序列
         train_dict = collections.OrderedDict()
         train_dict['input'] = c_train_x
-        train_dict['label'] = c_train_y3
+        train_dict['label1'] = c_train_y1
+        train_dict['label2'] = c_train_y2
+        train_dict['label3'] = c_train_y3
 
         # train_data.append(train_dict)
         train_data.append(tf.data.Dataset.from_tensor_slices(train_dict))
