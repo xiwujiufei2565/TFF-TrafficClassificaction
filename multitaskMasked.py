@@ -54,6 +54,9 @@ print(federated_train_data[0].element_spec)
 # 构建联邦学习测试数据集
 federated_test_data = make_federated_data(test_data)
 
+# 构建联邦学习评估数据集
+federated_val_data = make_federated_data(val_data)
+
 # 构建模型
 def build_model():
     model_input = Input(shape=(conf.timestep, 2))
@@ -124,7 +127,7 @@ def client_update(model, dataset, server_weights, client_optimizer, loss):
 
         # 更新梯度
         client_optimizer.apply_gradients(grads_and_vars)
-    # client_loss /= tf.cast(len(dataset), dtype=tf.float32)
+    client_loss /= tf.cast(len(dataset), dtype=tf.float32)
     return client_weights, client_loss
 
 # 服务端的更新的tf代码
@@ -199,16 +202,6 @@ def next_fn(server_weights, federated_dataset):
 
     return server_weights, client_weights, clients_loss
 
-def evaluate(server_state, central_emnist_test):
-  keras_model = build_model()
-  keras_model.compile(
-      loss=tf.keras.losses.SparseCategoricalCrossentropy(),
-      metrics=[tf.keras.metrics.SparseCategoricalAccuracy()]
-  )
-  keras_model.set_weights(server_state)
-  result = keras_model.evaluate(central_emnist_test, verbose=0)
-  return result
-
 # 初始化联邦学习算法
 federated_algorithm = tff.templates.IterativeProcess(
     initialize_fn=initialize_fn,
@@ -238,20 +231,42 @@ def evaluate(server_state, central_emnist_test):
   test_y3 = test_y3.reshape((-1, 5))
 
   keras_model.set_weights(server_state)
-  result = keras_model.evaluate(test_x, [test_y1, test_y2, test_y3])
+  result = keras_model.evaluate(test_x, [test_y1, test_y2, test_y3], verbose=0)
   return result
 
 state = federated_algorithm.initialize()
 
 # 开始训练
-NUM_ROUNDS = 2
+# NUM_ROUNDS = 11
+# name = ['sum_loss', 'class1_loss', 'class2_loss', 'class3_loss', 'class1_acc', 'class2_acc', 'class3_acc']
+# client_name = 'client'
+# with writer.as_default():
+#     for round_num in range(1, NUM_ROUNDS):
+#         state, client_weights, client_loss = federated_algorithm.next(state, federated_train_data)
+#         for i in range(conf.client_num):
+#             result = evaluate(client_weights[i], federated_train_data[i])
+#             for j in range(len(result)):
+#                 tf.summary.scalar(str(i) + "_" + client_name + name[j], result[j], step=round_num)
+#         # 对每一个客户端进行评估
+#         print("NUM_ROUNDS: {}, Loss: {}".format(round_num, np.array(client_loss)))
+
+NUM_ROUNDS = 50
 for round_num in range(1, NUM_ROUNDS):
     state, client_weights, client_loss = federated_algorithm.next(state, federated_train_data)
-
+    acc_mean = 0
     for i in range(conf.client_num):
-        result = evaluate(client_weights[i], federated_train_data[i])
-        print(result)
-
+        result = evaluate(state, federated_test_data[i])
+        acc_mean += result[6]
     # 对每一个客户端进行评估
-    print("NUM_ROUNDS: {}, Loss: {}".format(round_num, np.array(client_loss)))
+    acc_mean /= conf.client_num
+    print("NUM_ROUNDS: {}, Acc: {}".format(round_num, acc_mean))
+
+# 使用评估集，对服务端模型进行评估
+acc_val_mean = 0
+for i in range(conf.client_num):
+    result = evaluate(state, federated_val_data[i])
+    acc_val_mean = acc_val_mean + result[6]
+acc_val_mean = acc_val_mean / conf.client_num
+print("Valid Result: ", acc_val_mean)
+
 
