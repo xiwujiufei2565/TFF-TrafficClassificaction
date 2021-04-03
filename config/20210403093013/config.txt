@@ -1,0 +1,3 @@
+checkpoints_dir: D:\PythonProjects\TFF-TrafficClassificaction\checkpoints\20210403093013\20210403093013
+logs_dir: D:\PythonProjects\TFF-TrafficClassificaction\logs\20210403093013\20210403093013
+config_dir: D:\PythonProjects\TFF-TrafficClassificaction\config\20210403093013\20210403093013
